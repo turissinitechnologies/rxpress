@@ -1,0 +1,11 @@
+{
+  "name": "rxpress",
+  "version": "0.1.0",
+  "description": "rx + express node server",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "test"
+  },
+  "author": "",
+  "license": "ISC"
+}
