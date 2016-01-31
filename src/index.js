@@ -3,74 +3,67 @@
 const rx = require('rx');
 const expressStream = require('./express');
 
-module.exports = function (routesStream) {
-    return expressStream.map((expressApp) => {
-        const requests = new rx.Subject();
+function createResponse (str) {
+    const headers = [];
 
-        expressApp.requests = requests.asObservable();
+    function addHeader (name, value) {
+        headers.push({
+            name: name,
+            value: value
+        });
+    }
 
-        const responsesStream = expressApp.responses = routesStream.flatMap((routeData) => {
-            console.log(`Listening for ${routeData.method.toUpperCase()} ${routeData.path}`);
 
-            function createResponseObject (req, res) {
-                return {
-                    data: {},
-                    req: req,
-                    write: function () {
-                        res.write(JSON.stringify(this.data));
-                    },
+    return {
+        data: str,
+        headers: headers,
+        addHeader: addHeader
+    };
+}
 
-                    end: function () {
-                        res.end();
-                    }
-                }
-            }
+module.exports = {
+    createResponse: createResponse,
+    create: function (defaultRoutes) {
+        return expressStream.map((expressApp) => {
 
-            return rx.Observable.create(function (o) {
-                expressApp[routeData.method](routeData.path, function (req, res) {
-                    requests.onNext(req);
+            expressApp.addRoutes = function (routesStream) {
+                return rx.Observable.create(function (o) {
+                    routesStream.subscribe((routeData) => {
+                        console.log(`Listening for ${routeData.method.toUpperCase()} ${routeData.path}`);
 
-                    const response = createResponseObject(req, res);
+                        expressApp[routeData.method](routeData.path, function (req, res) {
+                            routeData.handler(req).first()
+                                .subscribe(function (resp) {
+                                    let response = resp;
 
-                    routeData.handler(req).first()
-                        .subscribe(function (data) {
-                            response.data = {
-                                data: data
-                            };
+                                    if (typeof resp === 'string') {
+                                        response = createResponse(resp);
+                                    }
 
-                            o.onNext(response);
-                        }, function (error) {
-                            const errorMessage = error.message ? error.message : error;
-                            const data = {
-                                error: {
-                                    message: errorMessage
-                                }
-                            };
+                                    response.headers.forEach(function (header) {
+                                        res.setHeader(header.name, header.value);
+                                    });
 
-                            response.data = data;
+                                    res.write(response.data);
+                                    res.end();
 
-                            o.onNext(response);
+                                }, function (error) {
+                                    res.write(error.message);
+                                    res.end();
+                                });
                         });
-                })
-            });
+
+                    }, function () {}, function () {
+                        o.onNext(expressApp);
+                        o.onCompleted();
+                    });
+                });
+            };
+
+            return expressApp;
 
         })
-        .publish();
-
-        responsesStream.subscribe((response) => {
-            response.write();
-            response.end();
-        });
-
-
-        expressApp.start = function (port) {
-            responsesStream.connect();
-            expressApp.listen(port);
-        };
-
-        return expressApp;
-
-    })
-    .first();
+        .first();
+    }
 
 }
